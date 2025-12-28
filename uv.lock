@@ -7,6 +7,7 @@ members = [
     "hnet-encoder",
     "hnet-encoder-impl",
     "hnet-impl",
+    "hydra",
 ]
 
 [[package]]
@@ -262,6 +263,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/98/63/4910c5fa9128fdadf
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/bd/1a875e0d592d447cbc02805fd3fe0f497714d6a2583f59d14fa9ebad96eb/huggingface_hub-0.36.0-py3-none-any.whl", hash = "sha256:7bcc9ad17d5b3f07b57c78e79d527102d08313caa278a641993acddcb894548d", size = 566094, upload-time = "2025-10-23T12:11:59.557Z" },
 ]
+
+[[package]]
+name = "hydra"
+version = "0.1.0"
+source = { editable = "packages/hydra" }
+dependencies = [
+    { name = "mamba-ssm" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "mamba-ssm", git = "https://github.com/main-horse/mamba?rev=tc" }]
 
 [[package]]
 name = "idna"

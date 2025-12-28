@@ -1,0 +1,17 @@
+[project]
+name = "hydra"
+version = "0.1.0"
+description = "Implementation of \"Hydra: Bidirectional State Space Models Through Generalized Matrix Mixers\""
+readme = "README.md"
+authors = [
+    { name = "Sukjun Hwang" },
+    { name = "Quinn Tucker" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mamba-ssm>=2.2.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.10,<0.10.0"]
+build-backend = "uv_build"
