@@ -38,7 +38,7 @@ class Hydra(nn.Module):
         conv_bias=True,
         # Fused kernel and sharding options
         chunk_size=256,
-        use_mem_eff_path=False,
+        use_mem_eff_path=True,
         layer_idx=None,  # Absorb kwarg for general module
         device=None,
         dtype=None,

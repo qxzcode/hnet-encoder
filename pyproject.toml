@@ -24,6 +24,8 @@ no-build-isolation-package = ["flash-attn", "causal-conv1d"]
 
 [dependency-groups]
 dev = [
+    "ipywidgets>=8.1.8",
+    "jupyter>=1.1.1",
     "pytest>=8.4.1",
     "ruff>=0.12.9",
 ]
