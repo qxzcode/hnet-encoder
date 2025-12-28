@@ -1,0 +1,20 @@
+[project]
+name = "hnet-impl"
+version = "0.1.0"
+description = ""
+authors = [
+    { email = "187762902+main-horse@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "flash-attn==2.8.1",
+    "causal-conv1d==1.5.2",
+    "torch==2.7.1",
+    "mamba-ssm",
+    "termcolor>=3.1.0",
+    "omegaconf>=2.3.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"

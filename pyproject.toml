@@ -1,0 +1,49 @@
+[project]
+name = "hnet-encoder"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flash-attn==2.8.1",
+    "causal-conv1d==1.5.2",
+    "torch==2.7.1",
+    "mamba-ssm",
+]
+
+[tool.uv.sources]
+mamba-ssm = { git = "https://github.com/main-horse/mamba", rev = "tc" }
+torch = { index = "pytorch" }
+
+# [tool.uv.extra-build-dependencies]
+# flash-attn = ["torch"]
+# causal-conv1d = ["torch"]
+
+[tool.uv]
+no-build-isolation-package = ["flash-attn", "causal-conv1d"]
+
+[tool.ruff.lint]
+ignore = [
+    "E701",  # multiple statements on one line (colon)
+    "E741",  # ambiguous variable name
+    "F401",  # imported but unused
+    "F403",  # 'from module import *' used
+    "F821",  # Undefined name `HNetLM`
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "ruff>=0.12.9",
+]
+
+[tool.uv.workspace]
+members = ["packages/hnet-impl"]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
