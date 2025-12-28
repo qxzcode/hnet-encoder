@@ -5,15 +5,18 @@ Example script taken from hnet-impl's original repo.
 import os
 
 import torch
-from torch import nested, Tensor as TT
-from torch.distributed import device_mesh as tdm, fsdp
-
-from hnet_impl import HNetLM, HNetConfig, ByteTokenizer, completion_sync
+from hnet_impl import ByteTokenizer, HNetConfig, HNetLM, completion_sync
+from torch import Tensor as TT
+from torch import nested
+from torch.distributed import device_mesh as tdm
+from torch.distributed import fsdp
 
 ## dist init
-r, ws = int(os.environ["WORLD_SIZE"]), int(os.environ["WORLD_SIZE"])
-torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-mesh = tdm.init_device_mesh("cuda", (ws,), mesh_dim_names=("dp",))
+world_size = int(os.environ.get("WORLD_SIZE", "1"))
+local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+torch.cuda.set_device(local_rank)
+if world_size > 1:
+    mesh = tdm.init_device_mesh("cuda", (world_size,), mesh_dim_names=("dp",))
 
 ## create model
 t = ByteTokenizer()
@@ -28,29 +31,25 @@ m.apply_fsdp(  # default: BF16, ZeRO2, 1D mesh
     mp_policy=fsdp.MixedPrecisionPolicy(param_dtype=torch.bfloat16),
     reshard_after_forward=False,
     mesh=mesh["dp"],
-) if ws > 1 else m
+) if world_size > 1 else m
 
 ## optim / lr sched
 base_lr, max_steps = 3e-4, 1000
 opt = torch.optim.AdamW(
-    [
-        dict(params=ls, lr=base_lr * lr_mod)
-        for ls, lr_mod in zip(m.split_params_by_hierachy(), c.lambda_s())
-    ],
+    [dict(params=ls, lr=base_lr * lr_mod) for ls, lr_mod in zip(m.split_params_by_hierachy(), c.lambda_s())],
     betas=(0.9, 0.95),
     weight_decay=0.01,
 )
 lrs = torch.optim.lr_scheduler.LambdaLR(
     opt,
-    lambda step: (pct := step / max_steps)
-    and (pct * 10 if pct < 0.1 else (1 if pct < 0.9 else (1 - pct) * 10)),
+    lambda step: (pct := step / max_steps) and (pct * 10 if pct < 0.1 else (1 if pct < 0.9 else (1 - pct) * 10)),
 )
 
 
 ## example dumb task: random number of repeating letters
 def generate_random_letters():
-    from string import ascii_lowercase
     from random import randint
+    from string import ascii_lowercase
 
     return "".join(randint(0, 10) * c for c in ascii_lowercase)
 
@@ -83,7 +82,7 @@ for step, (iids, lbls) in zip(range(max_steps), random_batches()):
     opt.zero_grad()
     lrs.step()
 
-    if step % 10 == 0 == r:
+    if step % 10 == 0:
         print(f"{step=}: {l_avg.item()=:.3f} {l_ratio.item()=:.3f}")
 
 with m.sampling_mode():
