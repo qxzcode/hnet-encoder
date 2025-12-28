@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from hydra!"
+from .modules import Hydra, MatrixMixer
