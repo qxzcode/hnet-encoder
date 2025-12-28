@@ -34,9 +34,4 @@ select = [
 ]
 ignore = [
     "FURB167",
-    "E701",  # multiple statements on one line (colon)
-    "E741",  # ambiguous variable name
-    "F401",  # imported but unused
-    "F403",  # 'from module import *' used
-    "F821",  # Undefined name `HNetLM`
 ]
