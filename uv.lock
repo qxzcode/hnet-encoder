@@ -702,7 +702,7 @@ requires-dist = [
     { name = "mamba-ssm", git = "https://github.com/main-horse/mamba?rev=tc" },
     { name = "mosaicml-streaming", specifier = "==0.4.1" },
     { name = "omegaconf", specifier = ">=2.2.3" },
-    { name = "torch", specifier = ">=2.2.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torch", specifier = ">=2.4.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", specifier = ">=4.28.1" },
 ]
 

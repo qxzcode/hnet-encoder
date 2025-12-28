@@ -14,7 +14,7 @@ dependencies = [
     "mamba-ssm>=2.1.0",
     "mosaicml-streaming==0.4.1",
     "omegaconf>=2.2.3",
-    "torch>=2.2.0",
+    "torch>=2.4.0",
     "transformers>=4.28.1",
 ]
 
