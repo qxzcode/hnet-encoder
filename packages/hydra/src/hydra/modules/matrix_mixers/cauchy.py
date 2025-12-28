@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from einops import rearrange
 
 
@@ -14,7 +13,7 @@ class Cauchy(nn.Module):
         is_data_dependent,
         d_model,
         qk_dim,
-        max_seq_len=None,   # max_seq_len is necessary for data-independent version.
+        max_seq_len=None,  # max_seq_len is necessary for data-independent version.
         expand=2,
         headdim=128,
         device=None,
@@ -38,27 +37,25 @@ class Cauchy(nn.Module):
         if self.is_data_dependent:
             self.bias = nn.Parameter(torch.tensor(0.5))
         else:
-            self.q_matrix = nn.Parameter(
-                torch.empty(self.max_seq_len, self.nheads, self.qk_dim, **factory_kwargs))
-            self.k_matrix = nn.Parameter(
-                torch.empty(self.max_seq_len, self.nheads, self.qk_dim, **factory_kwargs))
+            self.q_matrix = nn.Parameter(torch.empty(self.max_seq_len, self.nheads, self.qk_dim, **factory_kwargs))
+            self.k_matrix = nn.Parameter(torch.empty(self.max_seq_len, self.nheads, self.qk_dim, **factory_kwargs))
             nn.init.xavier_normal_(self.q_matrix)
             nn.init.xavier_normal_(self.k_matrix)
 
     def forward(self, v, q=None, k=None):
         residual = v
-        v = rearrange(v, 'b l (n h) -> b l n h', n=self.nheads)
+        v = rearrange(v, "b l (n h) -> b l n h", n=self.nheads)
 
         if self.is_data_dependent:
-            q = rearrange(q, 'b l (n d) -> b n l 1 d', n=self.nheads)
-            k = rearrange(k, 'b l (n d) -> b n 1 l d', n=self.nheads)
+            q = rearrange(q, "b l (n d) -> b n l 1 d", n=self.nheads)
+            k = rearrange(k, "b l (n d) -> b n 1 l d", n=self.nheads)
             q = torch.exp(q) + self.bias
             k = torch.exp(k) + self.bias
 
             inv_cauchy_matrix = q + k + self.tol
             cauchy_matrix = torch.sum(1 / inv_cauchy_matrix, dim=-1)
 
-            output = torch.einsum('b t n h, b n l t -> b l n h', v, cauchy_matrix)
+            output = torch.einsum("b t n h, b n l t -> b l n h", v, cauchy_matrix)
         else:
             # q, k: (nheads, seqlen, qkdim)
             q = torch.exp(self.q_matrix)
@@ -67,9 +64,9 @@ class Cauchy(nn.Module):
             inv_cauchy_matrix = (q.unsqueeze(1) + k.unsqueeze(0)) + self.tol
             cauchy_matrix = torch.sum(1 / inv_cauchy_matrix, dim=-1)
 
-            output = torch.einsum('b t n h, l t n -> b l n h', v, cauchy_matrix)
+            output = torch.einsum("b t n h, l t n -> b l n h", v, cauchy_matrix)
 
         output = self.std_dev * output
-        output = rearrange(output, 'b l n h -> b l (n h)') + residual
+        output = rearrange(output, "b l n h -> b l (n h)") + residual
 
         return output

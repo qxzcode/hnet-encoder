@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from einops import rearrange
 
 
@@ -13,7 +12,7 @@ class Toeplitz(nn.Module):
         self,
         is_data_dependent,
         d_model,
-        max_seq_len, # max_seq_len is necessary for data-independent version.
+        max_seq_len,  # max_seq_len is necessary for data-independent version.
         expand=2,
         headdim=128,
         device=None,
@@ -47,25 +46,25 @@ class Toeplitz(nn.Module):
         reverse_conv: (batch, seqlen, nheads)
         """
         residual = x
-        x = rearrange(x, 'b l (n h) -> b h n l', n=self.nheads)
+        x = rearrange(x, "b l (n h) -> b h n l", n=self.nheads)
 
         # Pad the hidden states
         x = F.pad(x, (self.pad_size, 0))
 
-        x_fft = torch.fft.fft(x.to(torch.float32), n=2*self.max_seq_len-1)
+        x_fft = torch.fft.fft(x.to(torch.float32), n=2 * self.max_seq_len - 1)
         if self.is_data_dependent:
-            forward_conv = rearrange(forward_conv, 'b l n -> b n l')
-            reverse_conv = rearrange(reverse_conv, 'b l n -> b n l')
+            forward_conv = rearrange(forward_conv, "b l n -> b n l")
+            reverse_conv = rearrange(reverse_conv, "b l n -> b n l")
 
-            conv_params = torch.cat(
-                [torch.flip(reverse_conv[:,:,1:], [-1]), forward_conv], dim=-1
-            ).to(torch.float32) # FFT requires float32.
+            conv_params = torch.cat([torch.flip(reverse_conv[:, :, 1:], [-1]), forward_conv], dim=-1).to(
+                torch.float32
+            )  # FFT requires float32.
             fft_conv_params = torch.fft.fft(conv_params, n=self.kernel_size).unsqueeze(1)
         else:
             fft_conv_params = torch.fft.fft(self.conv_params, n=self.kernel_size)
 
         output = torch.fft.ifft(x_fft * fft_conv_params, n=self.kernel_size).real
-        output = self.std_dev * output[:, :, :, :self.max_seq_len]
-        output = rearrange(output, 'b h n l -> b l (n h)').to(residual.dtype) + residual
+        output = self.std_dev * output[:, :, :, : self.max_seq_len]
+        output = rearrange(output, "b h n l -> b l (n h)").to(residual.dtype) + residual
 
         return output

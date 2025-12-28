@@ -2,8 +2,8 @@ import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange, repeat
 from mamba_ssm.ops.triton.layernorm_gated import (
-    _layer_norm_fwd,
     _layer_norm_bwd,
+    _layer_norm_fwd,
 )
 from mamba_ssm.ops.triton.ssd_combined import (
     _mamba_chunk_scan_combined_bwd,
@@ -50,7 +50,6 @@ def ssm_params(xBC, D_weight, D_bias, d_inner, headdim, ngroups):
 
 
 class HydraSplitConv1dScanCombinedFn(torch.autograd.Function):
-
     @staticmethod
     @torch.cuda.amp.custom_fwd
     def forward(
@@ -123,7 +122,11 @@ class HydraSplitConv1dScanCombinedFn(torch.autograd.Function):
         dt = chunk_flip_join(dt, dim=-1, op="vstack")
 
         scan = _mamba_chunk_scan_combined_fwd(
-            x=x, dt=dt, A=A, B=B, C=C,
+            x=x,
+            dt=dt,
+            A=A,
+            B=B,
+            C=C,
             chunk_size=chunk_size,
             D=None,
             z=None,
@@ -163,7 +166,9 @@ class HydraSplitConv1dScanCombinedFn(torch.autograd.Function):
         out = F.linear(u, outproj_weight, outproj_bias)
 
         ctx.save_for_backward(
-            z, xBC_og, dt,
+            z,
+            xBC_og,
+            dt,
             scan,
             conv1d_weight,
             conv1d_bias,
@@ -193,7 +198,9 @@ class HydraSplitConv1dScanCombinedFn(torch.autograd.Function):
     @torch.cuda.amp.custom_bwd
     def backward(ctx, dout, *args):
         (
-            z, xBC_og, dt,
+            z,
+            xBC_og,
+            dt,
             scan,
             conv1d_weight,
             conv1d_bias,
@@ -265,7 +272,11 @@ class HydraSplitConv1dScanCombinedFn(torch.autograd.Function):
         dscan = rearrange(dscan, "b s (h p) -> b s h p", p=ctx.headdim)
         dx, ddt, dA, dB, dC, _, _, ddt_bias, dinitial_states = _mamba_chunk_scan_combined_bwd(
             dout=dscan,
-            x=x, dt=dt, A=A, B=B, C=C,
+            x=x,
+            dt=dt,
+            A=A,
+            B=B,
+            C=C,
             out=scan,
             chunk_size=ctx.chunk_size,
             D=None,

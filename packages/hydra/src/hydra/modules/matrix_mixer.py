@@ -1,10 +1,10 @@
 # Copyright (c) 2024, Sukjun Hwang, Aakash Lahoti, Ratish Puduppully, Tri Dao, Albert Gu.
 
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from einops import rearrange, repeat
 
 try:
@@ -13,13 +13,13 @@ except ImportError:
     RMSNormGated = None
 
 from .matrix_mixers import (
-    Dense, 
+    Attention,
+    Cauchy,
+    Dense,
+    LowRank,
+    Quasiseparable,
     Toeplitz,
     Vandermonde,
-    Cauchy,
-    LowRank,
-    Attention,
-    Quasiseparable,
 )
 
 
@@ -30,7 +30,7 @@ class MatrixMixer(nn.Module):
         is_data_dependent,
         d_model,
         qk_dim,
-        max_seq_len=None, # max_seq_len is necessary for data-independent versions.
+        max_seq_len=None,  # max_seq_len is necessary for data-independent versions.
         d_conv=7,
         conv_init=None,
         expand=2,
@@ -191,9 +191,7 @@ class MatrixMixer(nn.Module):
                 z, x_and_conv = torch.split(u_proj, [self.d_inner, self.d_inner + 2 * self.nheads], dim=-1)
                 x_and_conv = self.act(self.conv1d(x_and_conv.transpose(1, 2))).transpose(1, 2)
                 x, forward_conv, reverse_conv = torch.split(
-                    x_and_conv,
-                    [self.d_inner, self.nheads, self.nheads],
-                    dim=-1
+                    x_and_conv, [self.d_inner, self.nheads, self.nheads], dim=-1
                 )
                 y = self.matrix_mixer(x, forward_conv=forward_conv, reverse_conv=reverse_conv)
             else:
@@ -227,11 +225,9 @@ class MatrixMixer(nn.Module):
         elif self.matrix_mixer_type == "quasiseparable":
             if self.is_data_dependent:
                 z, vqk, dt = torch.split(
-                    u_proj,
-                    [self.d_inner, self.d_inner + 2 * self.d_state, 2 * self.nheads],
-                    dim=-1
+                    u_proj, [self.d_inner, self.d_inner + 2 * self.d_state, 2 * self.nheads], dim=-1
                 )
-                dt = dt + repeat(self.matrix_mixer.dt_bias, 'h -> (2 h)')
+                dt = dt + repeat(self.matrix_mixer.dt_bias, "h -> (2 h)")
 
                 vqk = self.act(self.conv1d(vqk.transpose(1, 2)).transpose(1, 2))
                 v, qk = torch.split(vqk, [self.d_inner, 2 * self.d_state], dim=-1)
@@ -239,10 +235,10 @@ class MatrixMixer(nn.Module):
                 y = self.matrix_mixer(v, qk, dt)
             else:
                 z, v = torch.split(u_proj, [self.d_inner, self.d_inner], dim=-1)
-                dt = repeat(self.matrix_mixer.dt_bias, 'h -> b l (2 h)', b=batch, l=seqlen)
+                dt = repeat(self.matrix_mixer.dt_bias, "h -> b l (2 h)", b=batch, l=seqlen)
 
                 v = self.act(self.conv1d(v.transpose(1, 2)).transpose(1, 2))
-                qk = repeat(self.matrix_mixer.BC, 'l d -> b l d', b=batch)
+                qk = repeat(self.matrix_mixer.BC, "l d -> b l d", b=batch)
 
                 y = self.matrix_mixer(v, qk, dt)
 

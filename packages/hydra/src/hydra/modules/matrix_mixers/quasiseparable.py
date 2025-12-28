@@ -1,12 +1,11 @@
 # Copyright (c) 2024, Sukjun Hwang, Aakash Lahoti, Ratish Puduppully, Tri Dao, Albert Gu.
 
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from einops import rearrange, repeat
-
 from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
 
@@ -18,7 +17,7 @@ class Quasiseparable(nn.Module):
         is_data_dependent,
         d_model,
         qk_dim,
-        max_seq_len=None, # max_seq_len is necessary for data-independent version.
+        max_seq_len=None,  # max_seq_len is necessary for data-independent version.
         expand=2,
         headdim=128,
         dt_min=0.001,
@@ -46,15 +45,12 @@ class Quasiseparable(nn.Module):
         self.chunk_size = chunk_size
 
         if not self.is_data_dependent:
-            self.BC = nn.Parameter(
-                torch.empty(self.max_seq_len, 2 * self.d_state, **factory_kwargs)
-            )
+            self.BC = nn.Parameter(torch.empty(self.max_seq_len, 2 * self.d_state, **factory_kwargs))
             nn.init.xavier_normal_(self.BC)
 
         # Initialize log dt bias
         dt = torch.exp(
-            torch.rand(self.nheads, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min)
+            torch.rand(self.nheads, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min)
         )
         dt = torch.clamp(dt, min=dt_init_floor)
         # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
@@ -82,8 +78,8 @@ class Quasiseparable(nn.Module):
         A = -torch.exp(self.A_log.float())  # (nheads) or (d_inner, d_state)
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
 
-        dt = torch.cat((dt[:, :, :self.nheads], torch.flip(dt[:, :, self.nheads:], (1,))), dim=0)
-        dt = F.softplus(dt) # (2 * B, L, nheads)
+        dt = torch.cat((dt[:, :, : self.nheads], torch.flip(dt[:, :, self.nheads :], (1,))), dim=0)
+        dt = F.softplus(dt)  # (2 * B, L, nheads)
 
         x_og = x
         x = torch.cat((x, torch.flip(x, (1,))), dim=0)
@@ -109,8 +105,10 @@ class Quasiseparable(nn.Module):
         y = torch.roll(y, shifts=1, dims=1)
         y[:, 0, :] = 0.0
         y_fw, y_bw = y[:batch], torch.flip(y[batch:], (1,))
-        y = y_fw + y_bw + x_og * repeat(
-            F.linear(x_og, self.fc_D.weight, bias=self.D), "b l h -> b l (h p)", p=self.headdim
+        y = (
+            y_fw
+            + y_bw
+            + x_og * repeat(F.linear(x_og, self.fc_D.weight, bias=self.D), "b l h -> b l (h p)", p=self.headdim)
         )
 
         return y

@@ -2,10 +2,10 @@
 # Base code from https://github.com/state-spaces/mamba/blob/main/mamba_ssm/modules/mamba2_simple.py
 
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from einops import rearrange, repeat
 
 try:
@@ -19,7 +19,6 @@ from hydra.modules.ops import hydra_split_conv1d_scan_combined
 
 
 class Hydra(nn.Module):
-
     def __init__(
         self,
         d_model,
@@ -89,8 +88,7 @@ class Hydra(nn.Module):
 
         # Initialize log dt bias
         dt = torch.exp(
-            torch.rand(self.nheads, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min))
-            + math.log(dt_min)
+            torch.rand(self.nheads, **factory_kwargs) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min)
         )
         dt = torch.clamp(dt, min=dt_init_floor)
         # Inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
@@ -127,7 +125,7 @@ class Hydra(nn.Module):
 
         zxbcdt = self.in_proj(u)  # (B, L, d_in_proj)
         A = -torch.exp(self.A_log.float())  # (nheads) or (d_inner, d_state)
-        initial_states = repeat(self.init_states, "... -> b ...", b=2*batch) if self.learnable_init_states else None
+        initial_states = repeat(self.init_states, "... -> b ...", b=2 * batch) if self.learnable_init_states else None
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
 
         if self.use_mem_eff_path:
@@ -154,12 +152,10 @@ class Hydra(nn.Module):
             )
 
         z, xBC, dt = torch.split(
-            zxbcdt,
-            [self.d_inner, self.d_inner + 2 * (2 * self.ngroups * self.d_state), 2 * self.nheads],
-            dim=-1
+            zxbcdt, [self.d_inner, self.d_inner + 2 * (2 * self.ngroups * self.d_state), 2 * self.nheads], dim=-1
         )
 
-        dt = torch.cat((dt[:, :, :self.nheads], torch.flip(dt[:, :, self.nheads:], (1,))), dim=0)
+        dt = torch.cat((dt[:, :, : self.nheads], torch.flip(dt[:, :, self.nheads :], (1,))), dim=0)
         dt = F.softplus(dt + self.dt_bias)  # (2 * B, L, nheads)
         assert self.activation in ["silu", "swish"]
 
@@ -174,9 +170,11 @@ class Hydra(nn.Module):
         x_og = x
         x = torch.cat((x, torch.flip(x, (1,))), dim=0)
         BC = torch.cat(
-            (BC[:, :, :2 * self.ngroups * self.d_state],
-             torch.flip(BC[:, :, 2 * self.ngroups * self.d_state:], (1,))),
-            dim=0
+            (
+                BC[:, :, : 2 * self.ngroups * self.d_state],
+                torch.flip(BC[:, :, 2 * self.ngroups * self.d_state :], (1,)),
+            ),
+            dim=0,
         )
         B, C = torch.split(BC, [self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
 
@@ -197,8 +195,10 @@ class Hydra(nn.Module):
         y = torch.roll(y, shifts=1, dims=1)
         y[:, 0, :] = 0.0
         y_fw, y_bw = y[:batch], torch.flip(y[batch:], (1,))
-        y = y_fw + y_bw + x_og * repeat(
-            F.linear(x_og, self.fc_D.weight, bias=self.D), "b l h -> b l (h p)", p=self.headdim
+        y = (
+            y_fw
+            + y_bw
+            + x_og * repeat(F.linear(x_og, self.fc_D.weight, bias=self.D), "b l h -> b l (h p)", p=self.headdim)
         )
 
         # Multiply "gate" branch and apply extra normalization layer
