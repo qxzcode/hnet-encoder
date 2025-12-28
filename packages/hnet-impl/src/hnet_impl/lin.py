@@ -1,8 +1,8 @@
 import triton
 import triton.language as tl
 
-from .torchisms import torch, nn, TT, fsdp, F
 from .conceptual import BlockBoundaryMixin
+from .torchisms import TT, F, fsdp, nn, torch
 
 
 # Default: unbiased linear
@@ -37,15 +37,11 @@ class HighPrecLinear(BlockBoundaryMixin, nn.Linear):
 ### LMHead: Fused Linear + Cross Entropy ###
 @triton.heuristics({"HAS_SCALE": lambda args: args["scale"] is not None})
 @triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps) for num_warps in [1, 2, 4, 8, 16, 32]
-    ],
+    configs=[triton.Config({}, num_warps=num_warps) for num_warps in [1, 2, 4, 8, 16, 32]],
     key=["D"],
 )
 @triton.jit
-def logsumexp_fwd_kernel(
-    x, z, scale, D: tl.constexpr, B: tl.constexpr, HAS_SCALE: tl.constexpr
-):
+def logsumexp_fwd_kernel(x, z, scale, D: tl.constexpr, B: tl.constexpr, HAS_SCALE: tl.constexpr):
     i_n, i_d = tl.program_id(0).to(tl.int64), tl.program_id(1).to(tl.int64)
     o_d = i_d * B + tl.arange(0, B)
     m_d = o_d < D
@@ -104,9 +100,7 @@ def cross_entropy_kernel(
     tl.debug_barrier()
     for iv in range(0, NV):
         o_v = iv * BV + tl.arange(0, BV)
-        b_logits = (
-            tl.load(logits + o_v, mask=o_v < V, other=float("-inf")) * logit_scale
-        )
+        b_logits = tl.load(logits + o_v, mask=o_v < V, other=float("-inf")) * logit_scale
         if label_smoothing > 0:
             b_z += tl.sum(tl.where(o_v < V, -eps * b_logits, 0.0))
         b_p = (tl.exp(b_logits - b_lse) - eps) * logit_scale
@@ -138,16 +132,8 @@ def fused_linear_cross_entropy_forward(
     NC = triton.cdiv(N, C)
 
     dx = torch.zeros_like(x, device=device)
-    dw = (
-        torch.zeros_like(weight, device=device, dtype=torch.float)
-        if weight is not None
-        else None
-    )
-    db = (
-        torch.zeros_like(bias, device=device, dtype=torch.float)
-        if bias is not None
-        else None
-    )
+    dw = torch.zeros_like(weight, device=device, dtype=torch.float) if weight is not None else None
+    db = torch.zeros_like(bias, device=device, dtype=torch.float) if bias is not None else None
     loss = torch.zeros(N, device=device, dtype=torch.float)
 
     # NOTE: if you do label masking, you need to d2h (target!=ignore_index).sum() and use 1/that as scale
@@ -166,9 +152,7 @@ def fused_linear_cross_entropy_forward(
 
         # instead of using kernel, we apply logit scale at fwd mm to support uP numerical stability
         assert bias is None
-        c_logits = torch.empty(
-            c_x.shape[0], weight.shape[0], dtype=c_x.dtype, device=device
-        )
+        c_logits = torch.empty(c_x.shape[0], weight.shape[0], dtype=c_x.dtype, device=device)
         c_logits.addmm_(c_x, w.mT, beta=0, alpha=logit_scale)
 
         # keep lse in fp32 to maintain precision
@@ -193,9 +177,7 @@ def fused_linear_cross_entropy_forward(
         # keep dw in fp32 to maintain precision
         # if weight is not None: dw.addmm_(c_logits.mT, c_x, out_dtype=torch.float, alpha=scale) # TODO: pytorch 2.8
         if weight is not None:
-            dw += torch.empty_like(dw, dtype=c_x.dtype).addmm_(
-                c_logits.mT, c_x, beta=0, alpha=scale
-            )
+            dw += torch.empty_like(dw, dtype=c_x.dtype).addmm_(c_logits.mT, c_x, beta=0, alpha=scale)
         if bias is not None:
             db.add_(c_logits.sum(0), alpha=scale)
 
@@ -238,12 +220,8 @@ class FusedLinearCrossEntropyFunction(torch.autograd.Function):
         # create expected loss grads in a non-blocking manner
         dloss_expected = torch.cat(
             [
-                torch.ones(
-                    1, device=loss_mean.device, dtype=loss_mean.dtype
-                ),  # celoss mean should get grad 1.
-                torch.zeros(
-                    1, device=loss_mean.device, dtype=loss_mean.dtype
-                ),  # celoss sum should get grad 0.0
+                torch.ones(1, device=loss_mean.device, dtype=loss_mean.dtype),  # celoss mean should get grad 1.
+                torch.zeros(1, device=loss_mean.device, dtype=loss_mean.dtype),  # celoss sum should get grad 0.0
             ]
         )
         # downcast to dtype and store for backward
@@ -274,9 +252,7 @@ class LMHead(nn.Linear):
     def forward(self, x: TT, labels: TT | None = None) -> TT:
         if labels is None:
             return F.linear(x, self.weight) * self.logit_scale
-        l_mean, l_sum = FusedLinearCrossEntropyFunction.apply(
-            x, labels, self.weight, self.bias, self.logit_scale
-        )
+        l_mean, l_sum = FusedLinearCrossEntropyFunction.apply(x, labels, self.weight, self.bias, self.logit_scale)
         return l_mean, l_sum.detach()
 
 

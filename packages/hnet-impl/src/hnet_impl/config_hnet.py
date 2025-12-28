@@ -1,12 +1,10 @@
-from dataclasses import dataclass, field, asdict
 import json
+from dataclasses import asdict, dataclass, field
 
 
 ### helpers ###
 def get_stage_cfg(cfg: "AttnConfig | SSMConfig", stage_idx: int) -> dict[str, int]:
-    return {
-        k: v[stage_idx] if isinstance(v, list) else v for k, v in asdict(cfg).items()
-    }
+    return {k: v[stage_idx] if isinstance(v, list) else v for k, v in asdict(cfg).items()}
 
 
 ### Model configs ###
@@ -33,15 +31,9 @@ class HNetConfig:
     d_intermediate: list[int] = field(default_factory=list)
     vocab_size: int = 256
     tie_embeddings: bool = False
-    ssm_cfg: SSMConfig = field(
-        default_factory=lambda: SSMConfig(
-            chunk_size=256, d_conv=4, d_state=128, expand=2
-        )
-    )
+    ssm_cfg: SSMConfig = field(default_factory=lambda: SSMConfig(chunk_size=256, d_conv=4, d_state=128, expand=2))
     attn_cfg: AttnConfig = field(default_factory=AttnConfig)
-    N_compress: list[float] = field(
-        default_factory=list
-    )  # https://arxiv.org/pdf/2507.07955#page=8
+    N_compress: list[float] = field(default_factory=list)  # https://arxiv.org/pdf/2507.07955#page=8
 
     # NOTE: this defines the default N_compress for different hierarchies
     def __post_init__(self):
@@ -70,9 +62,7 @@ class HNetConfig:
             return cls(**c, attn_cfg=attn_cfg, ssm_cfg=ssm_cfg, **k)
 
     @classmethod
-    def create_reasonable_config(
-        cls, D: list[int], arch: list[str], *, d_head: int = 64
-    ):
+    def create_reasonable_config(cls, D: list[int], arch: list[str], *, d_head: int = 64):
         has_mlp = [any(c.isupper() for c in s) for s in arch]
         arch_layout = [arch[-1]]
         for a in reversed(arch[:-1]):

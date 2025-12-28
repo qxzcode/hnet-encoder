@@ -1,4 +1,5 @@
 import math
+
 import torch
 import triton
 import triton.language as tl
@@ -138,16 +139,12 @@ class _RMSNormBF16FP32Fn(torch.autograd.Function):
         assert x_bf16.dtype == torch.bfloat16, "x must be bfloat16"
         assert residual_f32.dtype == torch.float32, "residual must be float32"
         assert x_bf16.shape == residual_f32.shape and x_bf16.ndim >= 2
-        assert weight.ndim == 1 and weight.shape[0] == N, (
-            "weight must be 1D contiguous with length N"
-        )
+        assert weight.ndim == 1 and weight.shape[0] == N, "weight must be 1D contiguous with length N"
 
         # Collapse to 2D [M, N] with contiguous last dim
         x2 = x_bf16.view(M, N).contiguous()
         res2 = residual_f32.view(M, N).contiguous()
-        assert x2.stride(-1) == 1 and res2.stride(-1) == 1, (
-            "last dim must be contiguous"
-        )
+        assert x2.stride(-1) == 1 and res2.stride(-1) == 1, "last dim must be contiguous"
 
         # Allocate outputs
         y2 = torch.empty_like(x2, dtype=torch.bfloat16)
@@ -193,9 +190,7 @@ class _RMSNormBF16FP32Fn(torch.autograd.Function):
 
         dx2 = torch.empty_like(dy2, dtype=torch.bfloat16)
         dres2 = torch.empty_like(res_out2, dtype=torch.float32)
-        dweight_partials = torch.empty(
-            (M, N), dtype=torch.float32, device=weight.device
-        )
+        dweight_partials = torch.empty((M, N), dtype=torch.float32, device=weight.device)
 
         _rms_norm_bwd_kernel[(M,)](
             res_out2,
@@ -236,9 +231,7 @@ def fused_rmsnorm_with_residual(
     - eps, alpha_x, alpha_res: Python floats (constexpr to Triton)
     Returns y in bfloat16. Autograd yields dx in bfloat16, dres/dweight in float32.
     """
-    return _RMSNormBF16FP32Fn.apply(
-        x_bf16, residual_f32, weight, eps, alpha_x, alpha_res
-    )
+    return _RMSNormBF16FP32Fn.apply(x_bf16, residual_f32, weight, eps, alpha_x, alpha_res)
 
 
 def rmsnorm_with_residual_native(x_bf16, residual_f32, weight, eps, alpha_x, alpha_res):
@@ -265,9 +258,7 @@ def compare_fused_vs_native(x, res, w, ax, ar, eps=1e-5):
     res_f32_ref = res.detach().clone().requires_grad_(True)
     w_f32_ref = w.detach().clone().requires_grad_(True)
 
-    y_ref, r_ref = rmsnorm_with_residual_native(
-        x_bf16_ref, res_f32_ref, w_f32_ref, eps, ax, ar
-    )
+    y_ref, r_ref = rmsnorm_with_residual_native(x_bf16_ref, res_f32_ref, w_f32_ref, eps, ax, ar)
     dx_ref, dres_ref, dw_ref = torch.autograd.grad(
         outputs=(y_ref, r_ref),
         inputs=(x_bf16_ref, res_f32_ref, w_f32_ref),

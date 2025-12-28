@@ -1,36 +1,37 @@
 import math
 import os
 import re
-from contextlib import nullcontext, contextmanager
-from functools import partial, cache
+from contextlib import contextmanager, nullcontext
+from functools import cache, partial
 
-### Borrowed kernels/modules
-from flash_attn.layers.rotary import apply_rotary_emb
-from flash_attn import flash_attn_varlen_func
-from mamba_ssm.ops.triton.ssd_combined import mamba_split_conv1d_scan_combined
-from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
-
-from .torchisms import (
-    torch,
-    nn,
-    TT,
-    F,
-    fsdp,
-    dynamo,
-    ptd_checkpoint_wrapper,
-    dupe_fn,
-    unsafe_reduce_optimizedmodule_overhead,
-)
-from .conceptual import get_seq_idx, BlockBoundaryMixin
-from .lin import Lin
-from .norm import fused_rmsnorm_with_residual
-from .config_hnet import HNetConfig, get_stage_cfg
+import flash_attn
+import flash_attn.ops.triton.rotary as fa_rotary
 
 ###
 ### Patch flash-attn rotary to allow torch.compile ###
 import triton
-import flash_attn
-import flash_attn.ops.triton.rotary as fa_rotary
+from flash_attn import flash_attn_varlen_func
+
+### Borrowed kernels/modules
+from flash_attn.layers.rotary import apply_rotary_emb
+from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+from mamba_ssm.ops.triton.ssd_combined import mamba_split_conv1d_scan_combined
+
+from .conceptual import BlockBoundaryMixin, get_seq_idx
+from .config_hnet import HNetConfig, get_stage_cfg
+from .lin import Lin
+from .norm import fused_rmsnorm_with_residual
+from .torchisms import (
+    TT,
+    F,
+    dupe_fn,
+    dynamo,
+    fsdp,
+    nn,
+    ptd_checkpoint_wrapper,
+    torch,
+    unsafe_reduce_optimizedmodule_overhead,
+)
 
 assert flash_attn.__version__ == "2.8.1"
 
@@ -47,9 +48,7 @@ def apply_rotary(
     conjugate=False,
 ) -> torch.Tensor:
     assert (is_varlen := cu_seqlens is not None)
-    assert max_seqlen is not None, (
-        "If cu_seqlens is passed in, then max_seqlen must be passed"
-    )
+    assert max_seqlen is not None, "If cu_seqlens is passed in, then max_seqlen must be passed"
     _, nheads, headdim = x.shape
     batch = cu_seqlens.shape[0] - 1
     seqlen = max_seqlen
@@ -144,9 +143,7 @@ class CausalMHA(nn.Module):
         # force rope cache init, even if meta device ctx is used
         with torch.device("cuda"):
             rope_cache = self.rotary_cache(10000.0, rotary_emb_dim, msl)
-            self.register_buffer(
-                "rope_cache", torch.stack(rope_cache), persistent=False
-            )
+            self.register_buffer("rope_cache", torch.stack(rope_cache), persistent=False)
 
         self.msl = msl
         self.num_heads = num_heads
@@ -156,14 +153,8 @@ class CausalMHA(nn.Module):
         self.out_proj = Lin(d, d)
 
     def forward(self, x: TT, cu_seqlens: TT, max_seqlen: int):
-        assert max_seqlen <= self.msl, (
-            f"rope was initialized with {self.msl} < {max_seqlen}"
-        )
-        qk, v = (
-            self.Wqkv(x)
-            .unflatten(-1, (-1, self.d_head))
-            .split(2 * self.num_heads, dim=-2)
-        )
+        assert max_seqlen <= self.msl, f"rope was initialized with {self.msl} < {max_seqlen}"
+        qk, v = self.Wqkv(x).unflatten(-1, (-1, self.d_head)).split(2 * self.num_heads, dim=-2)
         qk = apply_rotary_emb(
             qk,
             *self.rope_cache,
@@ -210,9 +201,7 @@ class Mamba2Simple(nn.Module):
 
         self.d_inner = self.expand * self.d_model
         self.d_ssm = self.d_inner  # full dim SSM
-        assert (self.d_ssm % self.headdim) == 0, (
-            "expand*d_model must be divisible by headdim"
-        )
+        assert (self.d_ssm % self.headdim) == 0, "expand*d_model must be divisible by headdim"
         self.nheads = self.d_ssm // self.headdim
 
         # NOTE: to reduce complexity, I hardcode the following behaviors:
@@ -241,9 +230,7 @@ class Mamba2Simple(nn.Module):
             self.D = nn.Parameter(p["D"])
 
         # normalisation & output
-        self.norm = RMSNormGated(
-            self.d_ssm, eps=1e-5, norm_before_gate=False, group_size=self.d_ssm
-        )
+        self.norm = RMSNormGated(self.d_ssm, eps=1e-5, norm_before_gate=False, group_size=self.d_ssm)
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=False)
 
     # NOTE: init choices here are taken from mamba2 defaults.
@@ -262,9 +249,7 @@ class Mamba2Simple(nn.Module):
 
         return dict(
             dt_bias=dt + torch.log(-torch.expm1(-dt)),
-            A_log=torch.log(
-                torch.empty(nheads, dtype=torch.float32).uniform_(*A_init_range)
-            ),
+            A_log=torch.log(torch.empty(nheads, dtype=torch.float32).uniform_(*A_init_range)),
             D=torch.ones(nheads),
         )
 
@@ -339,9 +324,7 @@ class BlockMeta(type):
         *args,
         **kw,
     ):
-        Sub = cls.make_subclass(
-            arch, d, h, frozenset(ssm_cfg.items()), frozenset(attn_cfg.items())
-        )
+        Sub = cls.make_subclass(arch, d, h, frozenset(ssm_cfg.items()), frozenset(attn_cfg.items()))
         return super(BlockMeta, Sub).__call__(*args, **kw)
 
 
@@ -356,19 +339,11 @@ class Block(BlockBoundaryMixin, nn.Module, metaclass=BlockMeta):
         super().__init__()
         self.norm1 = ResidualRMSNorm(self.d, eps=1e-5)
         self.mixer = self.mixer_cls(self.d)
-        self.norm2 = (
-            ResidualRMSNorm(self.d, eps=1e-5)
-            if self.mlp_cls is not nn.Identity
-            else None
-        )
+        self.norm2 = ResidualRMSNorm(self.d, eps=1e-5) if self.mlp_cls is not nn.Identity else None
         self.mlp = self.mlp_cls(self.d)
 
-    def forward(
-        self, x: TT, residual: TT, cu_seqlens: TT, max_seqlen: int, seq_idx: TT
-    ):
-        assert x.dtype != residual.dtype == torch.float32, (
-            "x must be half prec, res must be fp32"
-        )
+    def forward(self, x: TT, residual: TT, cu_seqlens: TT, max_seqlen: int, seq_idx: TT):
+        assert x.dtype != residual.dtype == torch.float32, "x must be half prec, res must be fp32"
         x, residual = self.norm1(x, residual)
         if isinstance(self.mixer, Mamba2Simple):
             x = self.mixer(x[None], seq_idx=seq_idx)[0]
@@ -381,9 +356,7 @@ class Block(BlockBoundaryMixin, nn.Module, metaclass=BlockMeta):
 
     @staticmethod
     def apply_fsdp(self, **kw):
-        mp_policy = fsdp.MixedPrecisionPolicy(
-            param_dtype=torch.bfloat16, cast_forward_inputs=False
-        )
+        mp_policy = fsdp.MixedPrecisionPolicy(param_dtype=torch.bfloat16, cast_forward_inputs=False)
         return fsdp.fully_shard(self, **kw | {"mp_policy": mp_policy})
 
 
@@ -398,9 +371,7 @@ class Isotropic(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                Block(
-                    arch, self.d, self.h, ssm_cfg=self.ssm_cfg, attn_cfg=self.attn_cfg
-                )
+                Block(arch, self.d, self.h, ssm_cfg=self.ssm_cfg, attn_cfg=self.attn_cfg)
                 for arch, n_layer in re.findall(r"([mMtT])(\d+)", arch)
                 for _ in range(int(n_layer))
             ]
@@ -412,8 +383,7 @@ class Isotropic(nn.Module):
         self.first_unique_layer_ids = [
             i
             for i, l in enumerate(self.layers)
-            if (code := l.forward.__func__.__code__) not in uniq_code
-            and not uniq_code.add(code)
+            if (code := l.forward.__func__.__code__) not in uniq_code and not uniq_code.add(code)
         ] + [len(self.layers)]
         assert len(self.first_unique_layer_ids) - 1 == len(arch) // 2, (
             "there must be exactly one unique code impl per arch"
@@ -428,11 +398,7 @@ class Isotropic(nn.Module):
     @contextmanager
     def nonfirst_blockctx(self):
         callcount = getattr(self, "callcount", 0)
-        with (
-            unsafe_reduce_optimizedmodule_overhead()
-            if self.use_guard_skip and callcount > 3
-            else nullcontext()
-        ):
+        with unsafe_reduce_optimizedmodule_overhead() if self.use_guard_skip and callcount > 3 else nullcontext():
             yield
         self.callcount = callcount + (dynamo.eval_frame._stance.stance != "force_eager")
 
@@ -441,9 +407,7 @@ class Isotropic(nn.Module):
             return ptd_checkpoint_wrapper(l, preserve_rng_state=False) if ac else l
 
         for i, l in enumerate(self.layers):
-            self.layers.register_module(
-                str(i), torch.compile(apply_ac(l), fullgraph=True, backend="inductor")
-            )
+            self.layers.register_module(str(i), torch.compile(apply_ac(l), fullgraph=True, backend="inductor"))
 
     def forward(self, x: TT, cu_seqlens: TT, msl: int) -> TT:
         # NOTE: you can lower/remove this if you want. This is not currently useful (but can be useful for e.g. flex/fp8)
@@ -458,9 +422,7 @@ class Isotropic(nn.Module):
         cu_seqlens = cu_seqlens.int()
 
         # for each block, the residual is always fp32, and x is always half prec
-        res = torch.zeros_like(
-            x, dtype=torch.float32
-        ).requires_grad_()  # <-- requires_grad_ reduces recompile freq
+        res = torch.zeros_like(x, dtype=torch.float32).requires_grad_()  # <-- requires_grad_ reduces recompile freq
 
         # Execute each block, with a unique ctx for non-unique blocks.
         for i, j in zip(self.first_unique_layer_ids, self.first_unique_layer_ids[1:]):
@@ -473,8 +435,9 @@ class Isotropic(nn.Module):
 
 
 if __name__ == "__main__":
-    from .torchisms import make_chrometrace, random_x, ensure_no_cuda_sync
     from argparse import ArgumentParser
+
+    from .torchisms import ensure_no_cuda_sync, make_chrometrace, random_x
 
     # TORCH_LOGS=recompiles uv run -m hnet_impl.xf --s0=9289 --s1=2048 --d0=512 --d1=768 --lm=4 --lt=10
     ap = ArgumentParser()
@@ -488,9 +451,7 @@ if __name__ == "__main__":
     args_as_str = f"D{args.d0}-{args.d1}_L{args.lm}-{args.lt}_S{args.s0}-{args.s1}"
 
     ## create configs
-    c = HNetConfig.create_reasonable_config(
-        [args.d0, args.d1], [f"m{args.lm}", f"T{args.lt}"]
-    )
+    c = HNetConfig.create_reasonable_config([args.d0, args.d1], [f"m{args.lm}", f"T{args.lt}"])
     D = c.d_model
     S0 = args.s0  # total s=0 token bsz seen per gpu
     S1 = args.s1  # total s=1 token bsz seen per gpu

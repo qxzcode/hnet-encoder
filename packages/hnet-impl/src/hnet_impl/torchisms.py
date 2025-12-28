@@ -4,30 +4,34 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import FunctionType
 from typing import Callable
-from tqdm import tqdm
 
 import torch
-import torch.nn.functional as F
 import torch._dynamo as dynamo
-from torch import nn, Tensor as TT, distributed as dist, multiprocessing as mp, nested
-
+import torch.nn.functional as F
+from torch import Tensor as TT
+from torch import distributed as dist
+from torch import multiprocessing as mp
+from torch import nested, nn
 from torch._dynamo import OptimizedModule
-from torch.distributed import device_mesh as tdm, fsdp, checkpoint as dcp
-from torch.distributed.fsdp._fully_shard import FSDPModule
-from torch.distributed.checkpoint import state_dict as dcps
-from torch.distributed.tensor import DTensor
+from torch.distributed import checkpoint as dcp
+from torch.distributed import device_mesh as tdm
+from torch.distributed import fsdp
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
 )
-from torch.profiler import schedule, profile, ProfilerActivity, record_function
+from torch.distributed.checkpoint import state_dict as dcps
+from torch.distributed.fsdp._fully_shard import FSDPModule
+from torch.distributed.tensor import DTensor
 from torch.nested._internal.ops import (
-    register_jagged_func,
-    normalize_function,
-    raggedness_matches,
+    NestedTensor,
     _wrap_jagged_dim,
     extract_kwargs,
-    NestedTensor,
+    normalize_function,
+    raggedness_matches,
+    register_jagged_func,
 )
+from torch.profiler import ProfilerActivity, profile, record_function, schedule
+from tqdm import tqdm
 
 
 def NJT(ls: list[TT]):
@@ -36,9 +40,7 @@ def NJT(ls: list[TT]):
 
 def dupe_fn(fn: Callable, salt: int):
     co_new = fn.__code__.replace(co_consts=fn.__code__.co_consts + (salt,))
-    return FunctionType(
-        co_new, fn.__globals__, fn.__name__, fn.__defaults__, fn.__closure__
-    )
+    return FunctionType(co_new, fn.__globals__, fn.__name__, fn.__defaults__, fn.__closure__)
 
 
 @contextmanager
@@ -60,11 +62,7 @@ def unsafe_reduce_optimizedmodule_overhead():
 
 @contextmanager
 def summon_full_params(model: FSDPModule):
-    handles = [
-        m.unshard(async_op=True)
-        for m in reversed(list(model.modules()))
-        if isinstance(m, FSDPModule)
-    ]
+    handles = [m.unshard(async_op=True) for m in reversed(list(model.modules())) if isinstance(m, FSDPModule)]
     for h in handles:
         h.wait() if h is not None else 0
 
@@ -77,12 +75,7 @@ def summon_full_params(model: FSDPModule):
 
 def rand_njt_iids(docs: int, slen: range, v: int = 256):
     # generate random iids of fixed batch size
-    return NJT(
-        [
-            torch.randint(v, (seqlen,))
-            for seqlen in torch.randint(slen.start, slen.stop, (docs,))
-        ]
-    )
+    return NJT([torch.randint(v, (seqlen,)) for seqlen in torch.randint(slen.start, slen.stop, (docs,))])
 
 
 def random_iids(
@@ -106,9 +99,7 @@ def random_iids(
     while True:
         # generate random length && iids on CPU.
         i = torch.randint(s_min, s_max + 1, (1,), generator=rng).item()
-        t = torch.randint(vsize, (i,), dtype=torch.int, generator=rng).to(
-            "cuda", non_blocking=True
-        )
+        t = torch.randint(vsize, (i,), dtype=torch.int, generator=rng).to("cuda", non_blocking=True)
         # if the current random document would cause total batch to exceed msl, yield
         if i + total > msl:
             yield samples
@@ -119,9 +110,7 @@ def random_iids(
 
 def random_x(d: int, msl: int, *, device="cuda", dtype=torch.bfloat16, **k):
     for samples in random_iids(msl, **k):
-        yield NJT(
-            [torch.randn(t.numel(), d, device=device, dtype=dtype) for t in samples]
-        )
+        yield NJT([torch.randn(t.numel(), d, device=device, dtype=dtype) for t in samples])
 
 
 ### profiling tools
@@ -140,15 +129,11 @@ def profiler_setup(path_ct: Path, iters: int, skip_first=10):
     def handler(p: profile):
         p.export_chrome_trace(str(path_ct / f"step-{p.step_num}.json"))
 
-    with profile(
-        activities=activ, schedule=sched, on_trace_ready=handler, with_stack=True
-    ) as prof:
+    with profile(activities=activ, schedule=sched, on_trace_ready=handler, with_stack=True) as prof:
         yield tqdm_with_step(prof, iters)
 
 
-def make_chrometrace(
-    name: str, dl: iter, m: nn.Module, fwd_to_loss: callable, *, iters: int = 30
-):
+def make_chrometrace(name: str, dl: iter, m: nn.Module, fwd_to_loss: callable, *, iters: int = 30):
     dataset = [next(dl) for _ in range(iters)]  # prefetch data
     with profiler_setup(Path(f"./chrometrace-{name}"), 30) as g:
         for i, inputs in zip(g, dataset):

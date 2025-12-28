@@ -6,7 +6,7 @@ from typing import Callable
 from termcolor import colored
 from tqdm import tqdm
 
-from .torchisms import torch, nn, TT, NJT, F
+from .torchisms import NJT, TT, F, nn, torch
 
 
 ### Tokenizer ###
@@ -152,9 +152,7 @@ COLOR_CYCLE = ["light_yellow", "light_green"]
 HIGHLIGHT_CYCLE = ["on_black", "on_dark_grey"]
 
 
-def sample_hnet(
-    m: "HNetLM", iids: TT, bos: int, tok2str_stream: Callable[[TT], TT], **sample_kwargs
-):
+def sample_hnet(m: "HNetLM", iids: TT, bos: int, tok2str_stream: Callable[[TT], TT], **sample_kwargs):
     # yields [newchar, termcolor attributes for this char]
     assert iids.ndim == 1
 
@@ -240,9 +238,7 @@ def completion_iter(p: str, t: Tokenizer, m: "HNetLM", **k):
 
 def completion_sync(p: str, t: Tokenizer, m: "HNetLM", **k) -> str:
     try:
-        return "".join(
-            tqdm(completion_iter(p, t, m, **k), total=k.get("max_new", None))
-        )
+        return "".join(tqdm(completion_iter(p, t, m, **k), total=k.get("max_new", None)))
     except UnicodeDecodeError:
         return colored("[failed to decode UTF-8]", "red")
     except KeyError:
@@ -251,9 +247,7 @@ def completion_sync(p: str, t: Tokenizer, m: "HNetLM", **k) -> str:
 
 def colorize_byte_prefill(p: str, t: ByteTokenizer, m: "HNetLM") -> str:
     iids = t.encode([p])[0][1:].cuda()
-    return "".join(
-        colored(c, **k) for c, k in colorize_prefill(m, iids, aggregate_bytes_to_utf8)
-    )
+    return "".join(colored(c, **k) for c, k in colorize_prefill(m, iids, aggregate_bytes_to_utf8))
 
 
 __all__ = [

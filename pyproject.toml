@@ -22,15 +22,6 @@ torch = { index = "pytorch" }
 [tool.uv]
 no-build-isolation-package = ["flash-attn", "causal-conv1d"]
 
-[tool.ruff.lint]
-ignore = [
-    "E701",  # multiple statements on one line (colon)
-    "E741",  # ambiguous variable name
-    "F401",  # imported but unused
-    "F403",  # 'from module import *' used
-    "F821",  # Undefined name `HNetLM`
-]
-
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",

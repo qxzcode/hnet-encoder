@@ -1,0 +1,42 @@
+line-length = 120
+
+# Directories containing first-party packages:
+src = [
+    "packages/*/src",
+]
+
+[format]
+# Use `\n` line endings for all files.
+line-ending = "lf"
+
+[lint]
+# See https://docs.astral.sh/ruff/rules/ for a list of all available lint rules.
+select = [
+    "I",
+    "E4",
+    "E7",
+    "E9",
+    "W605",
+    "F",
+    "A",
+    "FAST",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "RET501",
+    "RET502",
+    "RET503",
+    "PLE",
+    "UP",
+    "FURB",
+    "RUF",
+]
+ignore = [
+    "FURB167",
+    "E701",  # multiple statements on one line (colon)
+    "E741",  # ambiguous variable name
+    "F401",  # imported but unused
+    "F403",  # 'from module import *' used
+    "F821",  # Undefined name `HNetLM`
+]

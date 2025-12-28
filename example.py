@@ -5,11 +5,12 @@ Example script taken from hnet-impl's original repo.
 import os
 
 import torch
-from hnet_impl import ByteTokenizer, HNetConfig, HNetLM, completion_sync
 from torch import Tensor as TT
 from torch import nested
 from torch.distributed import device_mesh as tdm
 from torch.distributed import fsdp
+
+from hnet_impl import ByteTokenizer, HNetConfig, HNetLM, completion_sync
 
 ## dist init
 world_size = int(os.environ.get("WORLD_SIZE", "1"))

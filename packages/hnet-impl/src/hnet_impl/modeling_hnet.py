@@ -1,14 +1,14 @@
-from dataclasses import dataclass
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
-from .torchisms import torch, TT, nn, F, nested, NJT, summon_full_params
 from .conceptual import BlockBoundaryMixin, get_seq_idx
 from .config_hnet import HNetConfig
+from .lin import HighPrecLinear, Lin, LMHead
+from .torchisms import NJT, TT, F, nested, nn, summon_full_params, torch
 from .xf import Isotropic
-from .lin import Lin, HighPrecLinear, LMHead
 
 ### ################
 ### H-Net submodules
@@ -41,9 +41,7 @@ class QProjPadded(torch.autograd.Function):
     def forward(ctx, x_flat: TT, w: TT, k_flat: TT, cu: TT):
         slen = x_flat.shape[0]
         # compute x@w.T, but padded left by 1seqlen
-        q_padded = torch.empty(
-            slen + 1, *x_flat.shape[1:], dtype=x_flat.dtype, device=x_flat.device
-        )
+        q_padded = torch.empty(slen + 1, *x_flat.shape[1:], dtype=x_flat.dtype, device=x_flat.device)
         torch.mm(x_flat, w.T.type_as(x_flat), out=q_padded[1:])
         ctx.save_for_backward(x_flat, w, cu)
         return q_padded.index_copy_(0, cu[:-1], -k_flat[cu[:-1]])[:slen]
@@ -132,9 +130,7 @@ class DeChunkLayer(nn.Module):
         inner2outer_idx = b_flat.cumsum(0) - 1
         return z_bar_flat.index_select(0, inner2outer_idx)
 
-    def forward(
-        self, h_flat: TT, b_flat: TT, p_selected_flat: TT, h_seq_idx: TT, *, eps=1e-4
-    ):
+    def forward(self, h_flat: TT, b_flat: TT, p_selected_flat: TT, h_seq_idx: TT, *, eps=1e-4):
         return self.forward_flat(
             h_flat,
             b_flat,
@@ -171,9 +167,7 @@ class HNet(nn.Module):
         self.is_innermost = len(arch_layout) == 1
 
         if self.is_innermost:
-            self.main_network = Isotropic(
-                c, arch_layout[0], stage_idx=stage_idx
-            )  # <-- don't increment
+            self.main_network = Isotropic(c, arch_layout[0], stage_idx=stage_idx)  # <-- don't increment
         else:
             self.encoder = Isotropic(c, arch_layout[0], stage_idx=stage_idx)
             self.main_network = HNet(c, stage_idx + 1)
@@ -184,9 +178,7 @@ class HNet(nn.Module):
             self.residual_proj = HighPrecLinear(self.d, self.d)
 
         d_gain = self.d - c.d_model[stage_idx - 1] if stage_idx else None
-        self.pad_dimension = (
-            nn.Parameter(torch.zeros(d_gain, device="cuda")) if d_gain else None
-        )
+        self.pad_dimension = nn.Parameter(torch.zeros(d_gain, device="cuda")) if d_gain else None
 
     # only compile blocks within a hnet, not the hnet itself
     def block_compile(self, ac: bool):
@@ -203,9 +195,7 @@ class HNet(nn.Module):
             "residual_proj",
             torch.compile(self.residual_proj, backend="inductor", fullgraph=True),
         )
-        self.ratio_loss = torch.compile(
-            self.ratio_loss, backend="inductor", fullgraph=True, dynamic=True
-        )
+        self.ratio_loss = torch.compile(self.ratio_loss, backend="inductor", fullgraph=True, dynamic=True)
 
     def ratio_loss(self, b_flat: TT, p_flat: TT):
         assert self.n, "HNetConfig did not receive valid N_compress; please edit it"
@@ -217,14 +207,10 @@ class HNet(nn.Module):
         return keep_expert + drop_experts
 
     @contextmanager
-    def least_blocking_masked_select(
-        self, *outer_flat_tensors: list[TT], mask_flat: TT, cu_seqlens: TT
-    ):
+    def least_blocking_masked_select(self, *outer_flat_tensors: list[TT], mask_flat: TT, cu_seqlens: TT):
         # WARNING: do not try to compile this. inductor will just wipe all pin memory & copy & Event & etc.
         inner_stats_cuda = torch.stack([cu_seqlens.diff().max(), cu_seqlens[-1]])
-        inner_stats_cpu = torch.empty_like(
-            inner_stats_cuda, device="cpu", pin_memory=True
-        )
+        inner_stats_cpu = torch.empty_like(inner_stats_cuda, device="cpu", pin_memory=True)
         inner_stats_cpu.copy_(inner_stats_cuda, non_blocking=True)
         d2h_event = torch.cuda.Event()
         d2h_event.record()
@@ -243,9 +229,7 @@ class HNet(nn.Module):
         x_flat = (
             x_flat
             if self.pad_dimension is None
-            else torch.cat(
-                [x_flat, self.pad_dimension.expand(x_flat.shape[0], -1)], dim=-1
-            )
+            else torch.cat([x_flat, self.pad_dimension.expand(x_flat.shape[0], -1)], dim=-1)
         )
         x_flat = x_flat.bfloat16()
 
@@ -258,23 +242,18 @@ class HNet(nn.Module):
         # obtaining r_select/p_select would require a cpu-sync'ing .masked_select in normal circumstances.
         # To avoid this, we initiate a D2H of the inner H-Net's seqlen ASAP, and enqueue work to let the GPU race ahead.
         # Note that, if you are **already CPU bound** prior to this (e.g. in really small runs), this code is detrimental.
-        with self.least_blocking_masked_select(
-            p_flat, r_flat, mask_flat=b_flat, cu_seqlens=select_cu
-        ) as (pending_selected_tensors, pending_cpu_stats):
-            ratio_loss = (
-                self.ratio_loss(b_flat, p_flat) if torch.is_grad_enabled() else 0
-            )
+        with self.least_blocking_masked_select(p_flat, r_flat, mask_flat=b_flat, cu_seqlens=select_cu) as (
+            pending_selected_tensors,
+            pending_cpu_stats,
+        ):
+            ratio_loss = self.ratio_loss(b_flat, p_flat) if torch.is_grad_enabled() else 0
             c_flat = torch.where(b_flat, p_flat, 1 - p_flat)[..., None]
             residual = self.residual_proj(r_flat)
         p_select, r_select = pending_selected_tensors
 
-        h_select, extras = self.main_network(
-            r_select, select_cu, pending_cpu_stats[0].item()
-        )
+        h_select, extras = self.main_network(r_select, select_cu, pending_cpu_stats[0].item())
 
-        x_flat = self.dechunk_layer(
-            h_select, b_flat, p_select, get_seq_idx(select_cu, p_select.shape[0])
-        )
+        x_flat = self.dechunk_layer(h_select, b_flat, p_select, get_seq_idx(select_cu, p_select.shape[0]))
         x_flat = (residual + x_flat.float() * ste_func(c_flat)).type_as(x_flat)
         x_flat = self.decoder(x_flat, flat_cu, msl)[..., :d_orig]
 
@@ -302,9 +281,7 @@ class HNetLM(BlockBoundaryMixin, nn.Module):
     # 2. if lbls is None,     return logits,extras[]
     #    use logits for autoregressive sampling.
     #    use extras[] to grab selected token IDs (b) for sampling pretty-printing.
-    def forward(
-        self, iids: TT, lbls: TT | None = None
-    ) -> tuple[TT | tuple[TT, TT], list]:
+    def forward(self, iids: TT, lbls: TT | None = None) -> tuple[TT | tuple[TT, TT], list]:
         assert iids.is_nested and iids.ndim == 2
         cu_s, msl = iids.offsets(), iids._max_seqlen
         x_flat = self.embeddings(iids.values())
@@ -321,9 +298,7 @@ class HNetLM(BlockBoundaryMixin, nn.Module):
             d[n.count("main_network")].append(p)
         # special-case innermost hnet which has redundant .main_network
         max_depth = max(d.keys())
-        assert 1 == len(d[max_depth - 1]), (
-            f"expected single .pad_dimension at {max_depth - 1}"
-        )
+        assert 1 == len(d[max_depth - 1]), f"expected single .pad_dimension at {max_depth - 1}"
         d[max_depth - 1] += d.pop(max_depth)
 
         return [d[k] for k in range(len(d))]
@@ -349,6 +324,7 @@ class HNetLM(BlockBoundaryMixin, nn.Module):
 
 def test_fwd_correctness():
     import re
+
     from .sampling import ByteTokenizer, completion_sync
 
     ## load hardcoded model
@@ -364,9 +340,7 @@ def test_fwd_correctness():
     with torch.no_grad():
         pfill = m(NJT([iids]))[0].values()
     # original: "tensor[77, 256] bf16 n=19712 (38Kb) x∈[-12.562, 15.188] μ=-2.047 σ=3.875 cuda:0"
-    assert -12.75 < pfill.min().item() < -12.25 and 15 < pfill.max().item() < 15.5, (
-        pfill
-    )
+    assert -12.75 < pfill.min().item() < -12.25 and 15 < pfill.max().item() < 15.5, pfill
     assert -2.1 < pfill.mean().item() < -2.0 and 3.87 < pfill.std().item() < 3.88, pfill
     print(f"{pfill=}")
 

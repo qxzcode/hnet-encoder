@@ -1,14 +1,12 @@
 from collections import deque
 
-from .torchisms import torch, TT, nn, OptimizedModule, fsdp
+from .torchisms import TT, OptimizedModule, fsdp, nn, torch
 
 
 def get_seq_idx(cu_seqlens: TT, flatlen: int) -> TT:
     # convert cu_seqlens -> seq_idx
     seq_idx = torch.zeros(flatlen, dtype=torch.int, device=cu_seqlens.device)
-    seq_idx[cu_seqlens[1:-1]] = torch.ones_like(
-        cu_seqlens[1:-1], dtype=torch.int
-    )  # avoid cpu sync
+    seq_idx[cu_seqlens[1:-1]] = torch.ones_like(cu_seqlens[1:-1], dtype=torch.int)  # avoid cpu sync
     return seq_idx.cumsum_(0)[None].int()  # most downstream kernels want int, not long
 
 
