@@ -29,7 +29,10 @@ dev = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/hnet-impl"]
+members = [
+    "packages/hnet-encoder-impl",
+    "packages/hnet-impl",
+]
 
 [[tool.uv.index]]
 name = "pypi"

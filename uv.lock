@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "hnet-encoder",
+    "hnet-encoder-impl",
     "hnet-impl",
 ]
 
@@ -195,6 +196,29 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "ruff", specifier = ">=0.12.9" },
+]
+
+[[package]]
+name = "hnet-encoder-impl"
+version = "0.1.0"
+source = { editable = "packages/hnet-encoder-impl" }
+dependencies = [
+    { name = "causal-conv1d" },
+    { name = "flash-attn" },
+    { name = "mamba-ssm" },
+    { name = "omegaconf" },
+    { name = "termcolor" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "causal-conv1d", specifier = "==1.5.2" },
+    { name = "flash-attn", specifier = "==2.8.1" },
+    { name = "mamba-ssm", git = "https://github.com/main-horse/mamba?rev=tc" },
+    { name = "omegaconf", specifier = ">=2.3.0" },
+    { name = "termcolor", specifier = ">=3.1.0" },
+    { name = "torch", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" },
 ]
 
 [[package]]
