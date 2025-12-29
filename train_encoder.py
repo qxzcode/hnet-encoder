@@ -42,7 +42,7 @@ BOS_ID = 254
 
 def tokenize_string(string: str) -> Tensor:
     return (
-        F.pad(torch.frombuffer(string.encode(), dtype=torch.uint8), (1, 0), value=BOS_ID).int()
+        F.pad(torch.frombuffer(bytearray(string.encode()), dtype=torch.uint8), (1, 0), value=BOS_ID).int()
         if string
         else torch.tensor([BOS_ID], dtype=torch.int)
     )
