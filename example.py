@@ -15,6 +15,7 @@ from hnet_impl import ByteTokenizer, HNetConfig, HNetLM, completion_sync
 def get_one_example(ds_iter: Generator, max_seq_len: int) -> str:
     return next(ds_iter)["text"][:max_seq_len]
 
+
 def NJT(ls: list[TT]) -> TT:
     return nested.nested_tensor(ls, layout=torch.jagged)
 
@@ -25,6 +26,7 @@ def random_batches(t: ByteTokenizer, ds_iter: Generator, max_seq_len: int) -> Ge
         iids = [s[:-1] for s in tokens]
         lbls = [s[1:] for s in tokens]
         yield NJT(iids), NJT(lbls).long()
+
 
 def main() -> None:
     ## dist init
@@ -60,8 +62,7 @@ def main() -> None:
         lambda step: (pct := step / max_steps) and (pct * 10 if pct < 0.1 else (1 if pct < 0.9 else (1 - pct) * 10)),
     )
 
-
-    max_seq_len = 512 # 1024 causes OOM
+    max_seq_len = 512  # 1024 causes OOM
     log_incr = 10
     max_new = max_steps // log_incr - 1
     with m.sampling_mode():
@@ -70,7 +71,7 @@ def main() -> None:
     # Load dataset
     ds = load_dataset("allenai/c4", "en", streaming=True)
     ds_train = ds["train"]
-    ds_train = ds_train.shuffle(0)
+    ds_train = ds_train.shuffle(seed=0)
     ds_train_iter = iter(ds_train)
 
     ## training loop
@@ -91,6 +92,7 @@ def main() -> None:
 
     with m.sampling_mode():
         print(completion_sync("", t, m, max_new=max_new))
+
 
 if __name__ == "__main__":
     main()
