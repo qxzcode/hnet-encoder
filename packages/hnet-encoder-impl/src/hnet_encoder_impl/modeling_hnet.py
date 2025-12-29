@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from hydra import Hydra
+
 ### ################
 ### H-Net submodules
 ### ################
@@ -110,4 +112,14 @@ class HNet(nn.Module):
     def __init__(self):
         super().__init__()
 
-        ...
+        self.d_model = 512
+
+        self.embedding = nn.Embedding(256, self.d_model)
+        self.encoder = Hydra(self.d_model, learnable_init_states=True, bias=True)
+        self.lm_head = nn.Linear(self.d_model, 256)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.embedding(x)
+        x = self.encoder(x)
+        x = self.lm_head(x)
+        return x
