@@ -10,6 +10,7 @@ dependencies = [
     "torch>=2.7.1",
     "mamba-ssm",
     "datasets>=4.4.2",
+    "mlflow>=3.8.1",
 ]
 
 [dependency-groups]
