@@ -1,6 +1,10 @@
+import random
+import sys
+from argparse import ArgumentParser
 from collections.abc import Iterable, Iterator
 from typing import TypedDict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
@@ -40,17 +44,34 @@ class DatasetItem(TypedDict):
 
 
 class Sampler:
-    def __init__(self, dataset: Iterator[DatasetItem], seq_len: int):
+    def __init__(
+        self,
+        dataset: Iterator[DatasetItem],
+        seq_len: int,
+        masking_rate: float = 0.15,
+        avg_mask_span_len: float = 8.0,
+    ):
         self.dataset = dataset
         self.seq_len = seq_len
-        self._buffer = b""
+        self.masking_rate = masking_rate
+        self.avg_mask_span_len = avg_mask_span_len
 
-    def sample(self) -> bytes:
-        while len(self._buffer) < self.seq_len:
-            self._buffer += next(self.dataset)["text"].encode("utf-8") + b"\n"
+        self._text_buffer = b""
+        self._mask_buffer: list[bool] = []
 
-        result = self._buffer[: self.seq_len]
-        self._buffer = self._buffer[self.seq_len :]
+    def sample(self) -> tuple[bytes, list[bool]]:
+        # Sample text to fill the text buffer.
+        while len(self._text_buffer) < self.seq_len:
+            self._text_buffer += next(self.dataset)["text"].encode("utf-8") + b"\n"
+
+        # Add segments to fill the mask buffer.
+        while len(self._mask_buffer) < self.seq_len:
+            span_len = np.random.poisson(self.avg_mask_span_len)
+            self._mask_buffer += [random.random() < self.masking_rate] * span_len
+
+        result = self._text_buffer[: self.seq_len], self._mask_buffer[: self.seq_len]
+        self._text_buffer = self._text_buffer[self.seq_len :]
+        self._mask_buffer = self._mask_buffer[self.seq_len :]
         return result
 
 
@@ -59,33 +80,48 @@ class BatchSampler:
         data_iter = iter(dataset)
         self._samplers = [Sampler(data_iter, seq_len) for _ in range(batch_size)]
 
-    def sample(self) -> list[bytes]:
-        return [s.sample() for s in self._samplers]
+    def sample(self) -> tuple[Tensor, Tensor]:
+        """
+        Samples a batch of training examples.
+
+        Returns (token_ids, mask).
+        """
+        texts: list[bytes] = []
+        masks: list[list[bool]] = []
+        for s in self._samplers:
+            text, mask = s.sample()
+            texts.append(text)
+            masks.append(mask)
+
+        return (
+            torch.stack([torch.frombuffer(bytearray(seq), dtype=torch.uint8) for seq in texts]).long(),
+            torch.tensor(masks),
+        )
 
 
 def random_batches(batch_sampler: BatchSampler):
     while True:
-        token_ids = torch.stack(
-            [torch.frombuffer(bytearray(seq), dtype=torch.uint8) for seq in batch_sampler.sample()]
-        ).to(device="cuda", dtype=torch.long)
-        mask = torch.rand_like(token_ids, dtype=torch.float) < 0.15
-        yield token_ids, mask
+        token_ids, mask = batch_sampler.sample()
+        yield token_ids.cuda(), mask.cuda()
 
 
 MASK_ID = 255
 
 
-def main():
+def main(out_file: str):
+    torch.set_float32_matmul_precision("high")
+
     # Create the model.
     print("Creating model...")
     with torch.device("cuda"):
         model = HNet()
+    model = torch.compile(model)
     num_params = sum(p.numel() for p in model.parameters())
     print(f"    Model has {num_params:,} parameters")
 
     # Set up the optimizer and LR scheduler.
     print("Creating optimizer and LR scheduler...")
-    base_lr = 3e-4
+    base_lr = 1e-3
     max_steps = 100_000
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -95,13 +131,14 @@ def main():
     )
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lambda step: (pct := step / max_steps) and (pct * 10 if pct < 0.1 else (1 if pct < 0.9 else (1 - pct) * 10)),
+        lambda step: (pct := step / max_steps)
+        and (step / 1_000 if step < 1_000 else (1 if pct < 0.9 else (1 - pct) * 10)),
     )
 
     # Initialize the dataset and sampler.
     print("Initializing dataset and sampler...")
     dataset_train = load_dataset("allenai/c4", "en", split="train", streaming=True).shuffle(seed=0)
-    batch_sampler = BatchSampler(dataset_train, seq_len=512, batch_size=32)
+    batch_sampler = BatchSampler(dataset_train, seq_len=512, batch_size=256)
 
     # Training loop
     print("Starting training loop\n")
@@ -122,12 +159,18 @@ def main():
 
             if step % 1 == 0:
                 print(f"{step=}: {loss.item()=:.3f}")
+            if step % 1_000 == 0:
+                torch.save(model, out_file)
+                print(f"Saved {out_file}")
     except KeyboardInterrupt:
         pass
     finally:
-        torch.save(model, "model.pt")
-        print("Saved model.pt")
+        torch.save(model, out_file)
+        print(f"Saved {out_file}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("out_file")
+    args = parser.parse_args()
+    main(args.out_file)

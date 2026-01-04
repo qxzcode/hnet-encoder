@@ -103,6 +103,46 @@ class DeChunkLayer(nn.Module):
         )
 
 
+class NGramEmbedding(nn.Module):
+    def __init__(self, num_embeddings_per_n: int, embedding_dim: int, max_n: int):
+        super().__init__()
+
+        if max_n < 1:
+            raise ValueError(f"max_n must be at least 1 (got {max_n=})")
+
+        self.embeddings = nn.ModuleList(
+            [nn.Embedding(min(256**n, num_embeddings_per_n), embedding_dim) for n in range(1, max_n + 1)]
+        )
+        for embedding in self.embeddings:
+            nn.init.zeros_(embedding.weight)
+
+    def forward(self, byte_ids: Tensor) -> Tensor:
+        device = byte_ids.device
+
+        # TODO: better n-gram hashing?
+        embs: list[Tensor] = []
+        for n, embedding in enumerate(self.embeddings, start=1):
+            kernel = torch.pow(1_000_003, torch.arange(n, device=device))[None, None, :] % embedding.num_embeddings
+            indices = (
+                F.conv1d(byte_ids.unsqueeze(-2).double(), kernel.double(), padding="same").squeeze(-2).long()
+                % embedding.num_embeddings
+            )
+            embs.append(embedding(indices))
+        return torch.stack(embs).sum(dim=0)
+
+
+class ResidualSequential(nn.Module):
+    def __init__(self, *blocks: nn.Module):
+        super().__init__()
+
+        self.blocks = nn.ModuleList(blocks)
+
+    def forward(self, x: Tensor) -> Tensor:
+        for block in self.blocks:
+            x = x + block(x)
+        return x
+
+
 ### #################
 ### Final HNet Module
 ### #################
@@ -114,8 +154,10 @@ class HNet(nn.Module):
 
         self.d_model = 512
 
-        self.embedding = nn.Embedding(256, self.d_model)
-        self.encoder = Hydra(self.d_model, learnable_init_states=True, bias=True)
+        self.embedding = NGramEmbedding(8192, self.d_model, max_n=5)
+        self.encoder = ResidualSequential(
+            *[Hydra(self.d_model, learnable_init_states=True, bias=True, use_mem_eff_path=False) for _ in range(5)],
+        )
         self.lm_head = nn.Linear(self.d_model, 256)
 
     def forward(self, x: Tensor) -> Tensor:
